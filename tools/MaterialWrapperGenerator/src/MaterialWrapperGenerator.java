@@ -107,7 +107,7 @@ public class MaterialWrapperGenerator
         }
 
         // Shader property regular expression & compile to pattern
-        String propertyRegex = " (.+) \\(\"(.+)\", (.+)\\) = (.+)";
+        String propertyRegex = "(.+) \\(\"(.+)\", (.+)\\) = (.+)";
         Pattern propertyPattern = Pattern.compile(propertyRegex);
 
         // Shader name regular expression
