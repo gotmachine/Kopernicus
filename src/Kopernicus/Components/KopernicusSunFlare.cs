@@ -24,6 +24,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using UnityEngine;
 
@@ -34,6 +35,17 @@ namespace Kopernicus.Components
     /// </summary>
     public class KopernicusSunFlare : SunFlare
     {
+        private class MapObjectData
+        {
+            public CelestialBody body;
+            public Vector3d targetDistance;
+            public double num2;
+        }
+
+        private static List<MapObjectData> mapObjectCache = new List<MapObjectData>(50);
+        private static int mapObjectCount;
+        private static int cacheLastFrame = 0;
+
         protected override void Awake()
         {
             Camera.onPreCull += PreCull;
@@ -61,69 +73,95 @@ namespace Kopernicus.Components
         private void LateUpdate()
         {
             Vector3d position = target.position;
-            sunDirection = (position - ScaledSpace.LocalToScaledSpace(sun.position)).normalized;
+            Vector3d sunPosition = ScaledSpace.LocalToScaledSpace(sun.position);
+            sunDirection = position - sunPosition;
+            double sunDistance = sunDirection.magnitude;
+            sunDirection /= sunDistance; // normalize;
             transform.forward = sunDirection;
-            sunFlare.brightness = brightnessMultiplier *
-                                  brightnessCurve.Evaluate(
-                                      (Single)(1.0 / (Vector3d.Distance(position,
-                                                           ScaledSpace.LocalToScaledSpace(sun.position)) /
-                                                       (AU * ScaledSpace.InverseScaleFactor))));
+            sunFlare.brightness = brightnessMultiplier
+                                  * brightnessCurve.Evaluate((float)(1.0 / (sunDistance / (AU * ScaledSpace.InverseScaleFactor))));
 
-            if (PlanetariumCamera.fetch.target == null ||
-                HighLogic.LoadedScene != GameScenes.TRACKSTATION && HighLogic.LoadedScene != GameScenes.FLIGHT)
+            if (PlanetariumCamera.fetch.target == null
+                || HighLogic.LoadedScene != GameScenes.TRACKSTATION
+                && HighLogic.LoadedScene != GameScenes.FLIGHT)
             {
                 return;
             }
 
-            Boolean state = true;
-            for (Int32 index = 0; index < PlanetariumCamera.fetch.targets.Count; index++)
+            int frameCount = Time.frameCount;
+
+            if (cacheLastFrame != frameCount)
             {
-                MapObject mapTarget = PlanetariumCamera.fetch.targets[index];
-                if (mapTarget == null)
+                cacheLastFrame = frameCount;
+
+                int cacheSize = mapObjectCache.Count;
+                int mapObjectIndex = 0;
+
+                Vector3 planetariumPosition = PlanetariumCamera.fetch.transform.position;
+
+                for (int i = PlanetariumCamera.fetch.targets.Count; i-- > 0;)
                 {
-                    continue;
+                    MapObject mapTarget = PlanetariumCamera.fetch.targets[i];
+
+                    if (mapTarget.IsNullOrDestroyed())
+                        continue;
+
+                    if (mapTarget.type != MapObject.ObjectType.CelestialBody)
+                        continue;
+
+                    SphereCollider collider = mapTarget.GetComponent<SphereCollider>();
+                    if (collider.IsNullOrDestroyed())
+                        continue;
+
+                    if (!mapTarget.GetComponent<MeshRenderer>().enabled)
+                        continue;
+
+                    if (mapTarget.transform.localScale.x < 1.0 || mapTarget.transform.localScale.x >= 3.0)
+                        continue;
+
+                    MapObjectData mapObjectData;
+                    if (mapObjectIndex < cacheSize)
+                    {
+                        mapObjectData = mapObjectCache[mapObjectIndex];
+                    }
+                    else
+                    {
+                        mapObjectData = new MapObjectData();
+                        mapObjectCache.Add(mapObjectData);
+                        cacheSize++;
+                    }
+
+                    mapObjectIndex++;
+
+                    mapObjectData.body = mapTarget.celestialBody;
+                    mapObjectData.targetDistance = planetariumPosition - mapTarget.transform.position;
+                    double radius = collider.radius;
+                    mapObjectData.num2 = Vector3d.Dot(mapObjectData.targetDistance, mapObjectData.targetDistance) - radius * radius;
                 }
 
-                if (mapTarget.type != MapObject.ObjectType.CelestialBody)
-                {
-                    continue;
-                }
+                mapObjectCount = mapObjectIndex;
+            }
 
-                if (mapTarget.GetComponent<SphereCollider>() == null)
-                {
-                    continue;
-                }
+            bool state = true;
+            for (int i = mapObjectCount; i-- > 0;)
+            {
+                MapObjectData mapObjectData = mapObjectCache[i];
 
-                if (!mapTarget.GetComponent<MeshRenderer>().enabled)
-                {
+                if (mapObjectData.body.RefEquals(sun))
                     continue;
-                }
 
-                if (mapTarget.celestialBody == sun)
-                {
-                    continue;
-                }
-
-                if (mapTarget.transform.localScale.x < 1.0 || mapTarget.transform.localScale.x >= 3.0)
-                {
-                    continue;
-                }
-
-                Vector3d targetDistance = PlanetariumCamera.fetch.transform.position - mapTarget.transform.position;
-                Single radius = mapTarget.GetComponent<SphereCollider>().radius;
-                Double num1 = 2.0 * Vector3d.Dot(-sunDirection, targetDistance);
-                Double num2 = Vector3d.Dot(targetDistance, targetDistance) - radius * (Double) radius;
-                Double d = num1 * num1 - 4.0 * num2;
+                double num1 = 2.0 * Vector3d.Dot(-sunDirection, mapObjectData.targetDistance);
+                double d = num1 * num1 - 4.0 * mapObjectData.num2;
                 if (d < 0)
-                {
                     continue;
-                }
 
-                Double num3 = (-num1 + Math.Sqrt(d)) * 0.5;
-                Double num4 = (-num1 - Math.Sqrt(d)) * 0.5;
+                double dSqrt = Math.Sqrt(d);
+                double num3 = (-num1 + dSqrt) * 0.5;
+                double num4 = (-num1 - dSqrt) * 0.5;
                 if (num3 >= 0.0 && num4 >= 0.0)
                 {
                     state = false;
+                    break;
                 }
             }
 
